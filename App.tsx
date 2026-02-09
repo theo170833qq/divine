@@ -96,7 +96,13 @@ const App: React.FC = () => {
   // Initialize Chat & Liturgical Season & Load History
   useEffect(() => {
     if (!showLanding && isPremium) {
-        initializeChat();
+        try {
+            initializeChat();
+        } catch (e) {
+            console.error("Failed to initialize chat (likely missing API KEY):", e);
+            // We do NOT block the UI. The chat will just fail gracefully later if used.
+        }
+
         setLiturgicalInfo(getLiturgicalInfo(new Date()));
         
         // Load history if user is logged in
@@ -281,7 +287,7 @@ const App: React.FC = () => {
         ...prev,
         messages: prev.messages.filter(msg => msg.id !== botMessageId),
         isLoading: false,
-        error: 'Perdoe-me, houve uma falha ao processar sua mensagem ou o arquivo. Tente novamente.',
+        error: 'Perdoe-me. Houve um erro de conexão com o sistema (Verifique a API KEY). Tente recarregar.',
       }));
     }
   }, [chatState.isLoading, selectedFile, session]);
@@ -327,7 +333,11 @@ const App: React.FC = () => {
         isLoading: false,
         error: null
     });
-    initializeChat();
+    try {
+        initializeChat();
+    } catch(e) {
+        console.error(e);
+    }
   };
 
   const handleSignOut = async () => {

@@ -1,9 +1,20 @@
 <!DOCTYPE html>
 <html lang="pt-BR" class="h-full">
   <head>
+    <!-- CRITICAL POLYFILL: Must be the first script to prevent crashes in libraries that access 'process' -->
+    <script>
+      (function() {
+        var global = window;
+        window.global = window;
+        window.process = window.process || { env: {} };
+        if (!window.process.env) window.process.env = {};
+      })();
+    </script>
+    
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <title>Divine Assistant - Guia Espiritual</title>
+
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;500;600;700;800;900&family=Inter:wght@300;400;500&family=Merriweather:ital,wght@0,300;0,400;0,700;1,300;1,400&display=swap" rel="stylesheet">
     <script>
@@ -178,10 +189,12 @@
   <script type="importmap">
 {
   "imports": {
-    "react-dom/": "https://esm.sh/react-dom@^19.2.4/",
-    "react": "https://esm.sh/react@^19.2.4",
-    "react/": "https://esm.sh/react@^19.2.4/",
-    "@google/genai": "https://esm.sh/@google/genai@^1.38.0",
+    "react-dom": "https://esm.sh/react-dom@18.3.1",
+    "react-dom/client": "https://esm.sh/react-dom@18.3.1/client",
+    "react-dom/": "https://esm.sh/react-dom@18.3.1/",
+    "react": "https://esm.sh/react@18.3.1",
+    "react/": "https://esm.sh/react@18.3.1/",
+    "@google/genai": "https://esm.sh/@google/genai@0.1.1",
     "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@2.39.0",
     "@stripe/stripe-js": "https://esm.sh/@stripe/stripe-js@2.4.0"
   }
