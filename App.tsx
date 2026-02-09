@@ -1,658 +1,372 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Message, ChatState, SuggestionType, LiturgicalInfo, LiturgicalColor, Attachment } from './types';
-import { initializeChat, sendMessageStream } from './services/geminiService';
-import { supabase } from './services/supabaseClient';
-import { getLiturgicalInfo } from './utils/liturgicalYear';
-import MessageBubble from './components/MessageBubble';
-import Sidebar from './components/Sidebar';
-import AboutModal from './components/AboutModal';
-import LandingPage from './components/LandingPage';
-import AuthModal from './components/AuthModal';
-import SubscriptionModal from './components/SubscriptionModal';
-import { SendIcon, BookIcon, HeartIcon, SparklesIcon, MenuIcon, CornerFlourish, OrnateDivider, ChiRhoIcon, PaperclipIcon, CrossIcon, CandleIcon, ScrollIcon, QuoteIcon, CalendarIcon, SpinnerIcon, LogOutIcon } from './components/Icons';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { 
+  Send, Menu, BookOpen, Heart, Sparkles, X, 
+  LogOut, Shield, Paperclip, Plus, Star, Cross, 
+  ChevronRight, Calendar, User, Info, Check, Clock
+} from 'lucide-react';
+import { GoogleGenAI } from "@google/genai";
+import { createClient } from '@supabase/supabase-js';
 
-const liturgicalColorMap: Record<LiturgicalColor, string> = {
-  purple: '#6B46C1',
-  white: '#F7FAFC',
-  green: '#38A169',
-  red: '#E53E3E',
-  rose: '#ED64A6',
+// --- CONFIG & PERSONA ---
+
+const SYSTEM_PROMPT = `
+Você é o "Divine Assistant", uma IA Católica treinada como Catequista Sênior e Teólogo fiel ao Magistério.
+Sua missão é guiar almas para Deus, esclarecer dúvidas e auxiliar na oração.
+
+REGRAS RÍGIDAS:
+1. Use apenas fontes católicas (CIC, Bíblia Ave Maria/Jerusalém, Documentos Papais).
+2. O Dogma é imutável. Nunca relativize pecados, mas fale com amor e misericórdia.
+3. Se não houver certeza absoluta da posição da Igreja, declare: "A Igreja não possui uma definição dogmática clara sobre este ponto".
+4. Nunca absolva pecados. Diga: "Leve este exame de consciência ao seu sacerdote na confissão".
+5. Use Google Search para buscar leituras da missa e santos do dia se solicitado.
+6. Comece sempre com clareza doutrinária e termine com aplicação prática.
+`;
+
+const SUPABASE_URL = 'https://glnzklcolxrbzmhgfcvd.supabase.co';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdsbnprbGNvbHhyYnptaGdmY3ZkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzAwODkwNzAsImV4cCI6MjA4NTY2NTA3MH0.d9Aq9SYB2o45HfoQs-xTlyZwY1dPogXcaMxWE4aqOsc';
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+// --- TYPES ---
+
+type Message = {
+  id: string;
+  role: 'user' | 'model';
+  content: string;
+  timestamp: number;
 };
 
-const App: React.FC = () => {
-  const [showLanding, setShowLanding] = useState(true);
-  const [showAuth, setShowAuth] = useState(false);
-  const [session, setSession] = useState<any>(null);
-  const [isPremium, setIsPremium] = useState(false); // Estado de assinatura
+// --- HELPER: Liturgical Season ---
+
+const getLiturgicalSeason = () => {
+  const now = new Date();
+  const month = now.getMonth();
+  const day = now.getDate();
+
+  // Very simplified seasonal logic for UI display
+  if (month === 11 && day >= 1) return { name: 'Advento', color: 'purple', bg: 'bg-purple-700' };
+  if ((month === 11 && day >= 25) || (month === 0 && day <= 10)) return { name: 'Natal', color: 'white', bg: 'bg-white' };
+  if (month >= 1 && month <= 3) return { name: 'Quaresma', color: 'purple', bg: 'bg-purple-900' };
   
-  const [chatState, setChatState] = useState<ChatState>({
-    messages: [],
-    isLoading: false,
-    error: null,
-  });
-  const [inputText, setInputText] = useState('');
-  const [selectedFile, setSelectedFile] = useState<Attachment | null>(null);
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  const [isAboutModalOpen, setIsAboutModalOpen] = useState(false);
-  const [isSubscriptionModalOpen, setIsSubscriptionModalOpen] = useState(false);
-  const [liturgicalInfo, setLiturgicalInfo] = useState<LiturgicalInfo | null>(null);
-  const [loadingSuggestion, setLoadingSuggestion] = useState<SuggestionType | null>(null);
+  return { name: 'Tempo Comum', color: 'green', bg: 'bg-green-700' };
+};
 
+// --- MAIN APP COMPONENT ---
+
+export default function App() {
+  const [session, setSession] = useState<any>(null);
+  const [messages, setMessages] = useState<Message[]>([
+    { id: '1', role: 'model', content: '**Pax Christi.** Sou o Divine Assistant, seu companheiro de jornada na fé católica. Como posso ajudar sua alma hoje?', timestamp: Date.now() }
+  ]);
+  const [input, setInput] = useState('');
+  const [isSidebarOpen, setSidebarOpen] = useState(false);
+  const [isPaywallOpen, setPaywallOpen] = useState(false);
+  const [isAboutOpen, setAboutOpen] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isPremium, setIsPremium] = useState(false);
+  
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const season = useMemo(() => getLiturgicalSeason(), []);
 
-  const initialMessage: Message = {
-    id: 'welcome',
-    role: 'model',
-    content: '**Pax Christi.** \n\nEu sou o Divine Assistant, seu companheiro digital na jornada da fé. \n\nComo posso auxiliar sua caminhada espiritual hoje?',
-    timestamp: new Date(),
-  };
-
-  // Check for existing session
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      if (session) setShowLanding(false);
-    });
-
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-    });
-
-    return () => subscription.unsubscribe();
+    supabase.auth.getSession().then(({ data: { session } }) => setSession(session));
+    supabase.auth.onAuthStateChange((_event, session) => setSession(session));
+    
+    // Check simulated premium status
+    if (localStorage.getItem('divine_premium') === 'true') setIsPremium(true);
   }, []);
 
-  // --- LOGICA DO PAYWALL (VERIFICAÇÃO DE ASSINATURA) ---
-  useEffect(() => {
-    if (session) {
-        // 1. Verifica se retornou do Stripe com sucesso (URL param: ?success=true)
-        const params = new URLSearchParams(window.location.search);
-        if (params.get('success') === 'true') {
-            setIsPremium(true);
-            // Salva no localStorage para persistir nesta sessão/navegador
-            localStorage.setItem(`divine_premium_${session.user.id}`, 'true');
-            // Limpa a URL para ficar bonita
-            window.history.replaceState({}, '', window.location.pathname);
-        } else {
-            // 2. Verifica se já estava salvo localmente como premium
-            const localPremium = localStorage.getItem(`divine_premium_${session.user.id}`);
-            if (localPremium === 'true') {
-                setIsPremium(true);
-            } else {
-                setIsPremium(false);
-            }
-        }
-    } else {
-        setIsPremium(false);
-    }
-  }, [session]);
-
-  // Se o usuário está logado mas NÃO é premium, forçamos o modal
-  const showPaywall = session && !isPremium;
-
-  // Initialize Chat & Liturgical Season & Load History
-  useEffect(() => {
-    if (!showLanding && isPremium) {
-        try {
-            initializeChat();
-        } catch (e) {
-            console.error("Failed to initialize chat (likely missing API KEY):", e);
-            // We do NOT block the UI. The chat will just fail gracefully later if used.
-        }
-
-        setLiturgicalInfo(getLiturgicalInfo(new Date()));
-        
-        // Load history if user is logged in
-        if (session) {
-            loadChatHistory();
-        } else {
-             setChatState((prev) => ({
-                ...prev,
-                messages: [initialMessage],
-            }));
-        }
-    }
-  }, [showLanding, session, isPremium]);
-
-  const loadChatHistory = async () => {
-      setChatState(prev => ({ ...prev, isLoading: true }));
-      try {
-          const { data, error } = await supabase
-            .from('messages')
-            .select('*')
-            .eq('user_id', session.user.id)
-            .order('created_at', { ascending: true });
-
-          if (error) throw error;
-
-          if (data && data.length > 0) {
-              const formattedMessages: Message[] = data.map((msg: any) => ({
-                  id: msg.id.toString(),
-                  role: msg.role,
-                  content: msg.content,
-                  timestamp: new Date(msg.created_at)
-              }));
-              setChatState(prev => ({ ...prev, messages: formattedMessages, isLoading: false }));
-          } else {
-               setChatState(prev => ({ ...prev, messages: [initialMessage], isLoading: false }));
-          }
-      } catch (error) {
-          console.error("Error loading history:", error);
-          setChatState(prev => ({ ...prev, messages: [initialMessage], isLoading: false }));
-      }
-  };
-
-  const saveMessageToDb = async (role: 'user' | 'model', content: string) => {
-      if (!session) return;
-      try {
-          await supabase.from('messages').insert([
-              {
-                  user_id: session.user.id,
-                  role: role,
-                  content: content,
-                  created_at: new Date().toISOString()
-              }
-          ]);
-      } catch (error) {
-          console.error("Error saving message:", error);
-      }
-  };
-
-  // Auto-scroll to bottom
   const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
   };
 
   useEffect(() => {
     scrollToBottom();
-  }, [chatState.messages, chatState.isLoading]);
+  }, [messages, isLoading]);
 
-  // Adjust textarea height
-  useEffect(() => {
-    if (textareaRef.current) {
-        textareaRef.current.style.height = 'auto';
-        textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 120) + 'px';
-    }
-  }, [inputText]);
+  const handleSend = async (overrideText?: string) => {
+    const text = overrideText || input;
+    if (!text.trim() || isLoading) return;
 
-  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const validTypes = ['application/pdf', 'text/plain', 'text/markdown'];
-      const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
-      const isText = file.type === 'text/plain' || file.name.toLowerCase().endsWith('.txt') || file.name.toLowerCase().endsWith('.md');
-
-      if (!isPdf && !isText) {
-        setChatState(prev => ({...prev, error: "Por favor, envie arquivos PDF ou Texto (.txt, .md)."}));
-        return;
-      }
-
-      const reader = new FileReader();
-      reader.onload = () => {
-        const base64String = reader.result as string;
-        const base64Data = base64String.split(',')[1];
-        
-        setSelectedFile({
-          name: file.name,
-          mimeType: file.type || (file.name.endsWith('.md') ? 'text/markdown' : 'text/plain'),
-          data: base64Data
-        });
-        setChatState(prev => ({...prev, error: null}));
-      };
-      reader.readAsDataURL(file);
-    }
-  };
-
-  const clearFile = () => {
-    setSelectedFile(null);
-    if (fileInputRef.current) fileInputRef.current.value = '';
-  };
-
-  const handleSendMessage = useCallback(async (text: string) => {
-    if ((!text.trim() && !selectedFile) || chatState.isLoading) return;
-
-    const isFileOnly = !text.trim() && !!selectedFile;
-    const apiPrompt = isFileOnly 
-        ? "Por favor, leia atentamente este documento anexado, armazene-o em sua memória de contexto para esta sessão e faça um brevíssimo resumo do tema principal. Confirme que está pronto para responder perguntas sobre ele." 
-        : text;
-    const displayContent = isFileOnly 
-        ? "*[Arquivo enviado para leitura e análise]*" 
-        : text;
-
-    const userMessage: Message = {
-      id: Date.now().toString(),
-      role: 'user',
-      content: displayContent,
-      timestamp: new Date(),
-      attachment: selectedFile || undefined
-    };
-
-    // Creates the bot placeholder immediately to ensure the loading bubble appears instantly
-    const botMessageId = (Date.now() + 1).toString();
-    const botMessagePlaceholder: Message = {
-      id: botMessageId,
-      role: 'model',
-      content: '', // Empty content triggers the loading animation in MessageBubble
-      timestamp: new Date(),
-    };
-
-    setChatState((prev) => ({
-      ...prev,
-      messages: [...prev.messages, userMessage, botMessagePlaceholder],
-      isLoading: true,
-      error: null,
-    }));
-    
-    // Save User Message DB
-    saveMessageToDb('user', displayContent);
-
-    setInputText('');
-    
-    if (textareaRef.current) {
-        textareaRef.current.style.height = 'auto';
+    // Simulation of free limit (5 messages)
+    if (!isPremium && messages.length > 10) {
+      setPaywallOpen(true);
+      return;
     }
 
-    const currentFile = selectedFile;
-    setSelectedFile(null);
-    if (fileInputRef.current) fileInputRef.current.value = '';
+    const userMessage: Message = { id: Date.now().toString(), role: 'user', content: text, timestamp: Date.now() };
+    setMessages(prev => [...prev, userMessage]);
+    setInput('');
+    setIsLoading(true);
 
     try {
-      let accumulatedText = '';
-      const stream = sendMessageStream(apiPrompt, currentFile || undefined);
+      const apiKey = process.env.API_KEY;
+      if (!apiKey) throw new Error("API Key missing");
 
-      for await (const chunk of stream) {
-        accumulatedText += chunk;
-        setChatState((prev) => ({
-          ...prev,
-          messages: prev.messages.map((msg) => 
-            msg.id === botMessageId ? { ...msg, content: accumulatedText } : msg
-          ),
-        }));
-      }
-
-      // Save Bot Message DB
-      saveMessageToDb('model', accumulatedText);
-
-      setChatState((prev) => ({
-        ...prev,
-        isLoading: false,
-      }));
-
-    } catch (error) {
-      // Remove the placeholder if there was an error
-      setChatState((prev) => ({
-        ...prev,
-        messages: prev.messages.filter(msg => msg.id !== botMessageId),
-        isLoading: false,
-        error: 'Perdoe-me. Houve um erro de conexão com o sistema (Verifique a API KEY). Tente recarregar.',
-      }));
-    }
-  }, [chatState.isLoading, selectedFile, session]);
-
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSendMessage(inputText);
-    }
-  };
-
-  const handleSuggestionClick = async (type: SuggestionType) => {
-    setLoadingSuggestion(type);
-    let prompt = "";
-    switch (type) {
-      case SuggestionType.EXAM:
-        prompt = "Gostaria de fazer um exame de consciência para me preparar para a confissão.";
-        break;
-      case SuggestionType.PRAYER:
-        prompt = "Estou precisando de uma oração para acalmar meu coração.";
-        break;
-      case SuggestionType.CATECHESIS:
-        prompt = "Tenho uma dúvida sobre a doutrina da Igreja.";
-        break;
-    }
-    await handleSendMessage(prompt);
-    setLoadingSuggestion(null);
-  };
-
-  const handleNavigateHistory = (messageId: string) => {
-    const element = document.getElementById(`msg-${messageId}`);
-    if (element) {
-        element.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        // Optional: Flash highlight
-        element.classList.add('bg-gold-50/30');
-        setTimeout(() => element.classList.remove('bg-gold-50/30'), 2000);
-    }
-  };
-
-  const handleNewChat = () => {
-    setChatState({
-        messages: [{...initialMessage, timestamp: new Date()}],
-        isLoading: false,
-        error: null
-    });
-    try {
-        initializeChat();
-    } catch(e) {
-        console.error(e);
-    }
-  };
-
-  const handleSignOut = async () => {
-      await supabase.auth.signOut();
-      setSession(null);
-      setIsPremium(false); // Reset premium on logout
-      setShowLanding(true);
-      setChatState({
-          messages: [],
-          isLoading: false,
-          error: null
+      const ai = new GoogleGenAI({ apiKey });
+      const result = await ai.models.generateContent({
+        model: 'gemini-3-flash-preview',
+        contents: [...messages, userMessage].map(m => ({
+          role: m.role,
+          parts: [{ text: m.content }]
+        })),
+        config: {
+          systemInstruction: SYSTEM_PROMPT,
+          tools: [{ googleSearch: {} }]
+        }
       });
+
+      const responseText = result.text;
+      setMessages(prev => [...prev, {
+        id: (Date.now() + 1).toString(),
+        role: 'model',
+        content: responseText || "Desculpe, não consegui processar sua dúvida agora.",
+        timestamp: Date.now()
+      }]);
+    } catch (err: any) {
+      setMessages(prev => [...prev, {
+        id: (Date.now() + 1).toString(),
+        role: 'model',
+        content: "**Erro na conexão.** Por favor, tente novamente em instantes. Pax Christi.",
+        timestamp: Date.now()
+      }]);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  const isWelcomeState = chatState.messages.length <= 1;
+  const signIn = async () => {
+    await supabase.auth.signInAnonymously();
+  };
 
-  if (showLanding) {
+  const handleSubscribe = () => {
+    setIsPremium(true);
+    localStorage.setItem('divine_premium', 'true');
+    setPaywallOpen(false);
+  };
+
+  // --- SUB-COMPONENTS: LANDING ---
+  if (!session) {
     return (
-        <>
-            <LandingPage onStart={() => setShowAuth(true)} />
-            <AuthModal 
-                isOpen={showAuth} 
-                onClose={() => setShowAuth(false)} 
-                onSuccess={() => setShowLanding(false)} 
-            />
-        </>
+      <div className="h-full w-full bg-church-50 flex flex-col items-center justify-center p-6 text-royal-900 relative bg-paper overflow-hidden">
+        <div className="absolute top-0 w-full h-1 bg-gradient-to-r from-gold-600 via-gold-300 to-gold-600"></div>
+        <div className="max-w-md w-full bg-white p-8 rounded-lg shadow-2xl border-2 border-gold-500 text-center relative z-10 animate-fade-in">
+          <div className="w-20 h-20 bg-royal-900 rounded-full flex items-center justify-center mx-auto mb-6 border-2 border-gold-400 shadow-lg">
+            <Cross className="w-10 h-10 text-gold-400" />
+          </div>
+          <h1 className="text-4xl font-display font-bold text-royal-900 mb-2 tracking-widest">DIVINE ASSISTANT</h1>
+          <p className="text-church-800 font-serif italic mb-10 text-lg">Inteligência Artificial fiel ao Magistério.</p>
+          
+          <div className="space-y-4 mb-8 text-left text-sm font-serif text-church-900">
+             <div className="flex items-center gap-3"><Check className="text-gold-600 w-5 h-5"/> <span>Catecismo e Escrituras integrados.</span></div>
+             <div className="flex items-center gap-3"><Check className="text-gold-600 w-5 h-5"/> <span>Sem alucinações ou relativismo moral.</span></div>
+             <div className="flex items-center gap-3"><Check className="text-gold-600 w-5 h-5"/> <span>Guia prático para a vida espiritual.</span></div>
+          </div>
+
+          <button 
+            onClick={signIn}
+            className="w-full bg-royal-900 text-gold-100 font-display font-bold py-4 rounded-md hover:bg-royal-800 transition-all flex items-center justify-center gap-2 group shadow-xl uppercase tracking-[0.2em]"
+          >
+            <span>Iniciar Jornada</span>
+            <ChevronRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
+          </button>
+          
+          <p className="mt-6 text-[10px] text-church-500 uppercase tracking-widest font-sans">Ad Maiorem Dei Gloriam</p>
+        </div>
+        <div className="mt-8 text-church-400 text-xs font-serif italic opacity-60">"Lumen Fidei • Auxilium Christianorum"</div>
+      </div>
     );
   }
 
+  // --- SUB-COMPONENTS: MAIN APP ---
   return (
-    // Main Container
-    <div className="flex flex-col h-[100dvh] bg-royal-900 font-sans text-gray-900 overflow-hidden relative selection:bg-gold-500 selection:text-white">
+    <div className="h-full w-full flex bg-church-50 text-royal-900 font-sans relative overflow-hidden bg-paper">
       
-      <AboutModal isOpen={isAboutModalOpen} onClose={() => setIsAboutModalOpen(false)} />
-      
-      {/* PAYWALL LOGIC:
-          - Se showPaywall é true, o modal abre em modo "Blocking" (sem botão de fechar).
-          - Caso contrário, abre normalmente se o usuário clicar no botão "Premium" da Sidebar.
-      */}
-      <SubscriptionModal 
-        isOpen={showPaywall || isSubscriptionModalOpen} 
-        onClose={() => setIsSubscriptionModalOpen(false)} 
-        isBlocking={showPaywall} // Ativa o modo bloqueio se necessário
-      />
-
-      <Sidebar 
-        isOpen={isSidebarOpen} 
-        onClose={() => setIsSidebarOpen(false)} 
-        onNewChat={handleNewChat}
-        onQuickPrompt={handleSendMessage}
-        onOpenAbout={() => setIsAboutModalOpen(true)}
-        onOpenSubscription={() => setIsSubscriptionModalOpen(true)}
-        liturgicalInfo={liturgicalInfo}
-        messages={chatState.messages}
-        onNavigateHistory={handleNavigateHistory}
-      />
-
-      {/* Header - ENHANCED & TALLER */}
-      <header className="flex-none flex items-center justify-between px-5 py-6 md:px-8 md:py-8 bg-royal-900/90 backdrop-blur-xl border-b-2 border-double border-gold-500/30 shadow-2xl z-20 relative pt-safe transition-all duration-300">
-        
-        {/* Left: Menu Button */}
-        <button 
-            onClick={() => setIsSidebarOpen(true)}
-            className="relative z-10 text-gold-400 hover:text-gold-200 transition-colors p-3 rounded-full hover:bg-white/5 active:scale-95 shadow-sm border border-transparent hover:border-gold-500/30 group"
-            aria-label="Abrir Menu"
-        >
-            <MenuIcon className="w-7 h-7" />
-        </button>
-
-        {/* Center: Title & Badge */}
-        <div className="flex flex-col items-center justify-center relative z-10 gap-2">
-          
-          {/* Main Title */}
-          <div className="flex items-center gap-2">
-              <h1 className="text-2xl md:text-3xl font-display font-black text-transparent bg-clip-text bg-gradient-to-b from-gold-100 via-gold-300 to-gold-500 tracking-[0.15em] uppercase drop-shadow-[0_2px_4px_rgba(0,0,0,0.5)] text-center leading-none">
-                  Divine Assistant
-              </h1>
+      {/* SIDEBAR */}
+      <div className={`fixed inset-y-0 left-0 z-50 w-72 bg-royal-900 text-gold-100 transform transition-transform duration-300 shadow-2xl ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:relative md:translate-x-0`}>
+        <div className="flex flex-col h-full p-6 border-r border-gold-600/30">
+          <div className="flex items-center justify-between mb-10">
+            <div className="flex items-center gap-3">
+              <Cross className="w-6 h-6 text-gold-400" />
+              <h2 className="font-display font-bold text-lg tracking-widest">DIVINE</h2>
+            </div>
+            <button onClick={() => setSidebarOpen(false)} className="md:hidden"><X className="w-6 h-6"/></button>
           </div>
 
-          {/* Liturgical Badge */}
-          {liturgicalInfo && (
-              <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-black/40 border border-gold-500/20 shadow-inner backdrop-blur-sm mt-1">
-                  <div 
-                      style={{ backgroundColor: liturgicalColorMap[liturgicalInfo.color], boxShadow: `0 0 8px ${liturgicalColorMap[liturgicalInfo.color]}` }} 
-                      className="w-2 h-2 rounded-full animate-pulse-slow"
-                  ></div>
-                  <span className="text-[10px] md:text-xs text-gold-200/90 font-serif italic tracking-wider uppercase">
-                      {liturgicalInfo.season === 'Ordinary Time' ? 'Tempo Comum' : 
-                       liturgicalInfo.season === 'Advent' ? 'Advento' : 
-                       liturgicalInfo.season === 'Lent' ? 'Quaresma' : 
-                       liturgicalInfo.season === 'Easter' ? 'Páscoa' : 'Natal'}
-                  </span>
-              </div>
-          )}
-        </div>
+          <button 
+            onClick={() => { setMessages(messages.slice(0,1)); setSidebarOpen(false); }}
+            className="w-full flex items-center gap-3 p-3 mb-8 bg-white/5 hover:bg-white/10 rounded-md border border-gold-500/20 text-sm font-bold transition-all uppercase tracking-wider"
+          >
+            <Plus className="w-4 h-4 text-gold-400" /> Nova Conversa
+          </button>
 
-        {/* Right: Sign Out Icon */}
-        <div className="relative z-10">
-            <button 
-                onClick={handleSignOut}
-                className="group flex items-center gap-2 text-church-400 hover:text-red-400 transition-colors px-3 py-2 rounded-lg hover:bg-white/5"
-                title="Sair"
-            >
-                <span className="text-[10px] font-bold uppercase tracking-widest hidden md:inline-block group-hover:text-red-400/80 transition-colors">Sair</span>
-                <LogOutIcon className="w-6 h-6" />
-            </button>
-        </div>
-      </header>
-
-      {/* Main Layout Container */}
-      <div className="flex-1 flex justify-center w-full overflow-hidden bg-church-50 relative perspective-1000">
-         {/* Backgrounds */}
-         <div className="absolute inset-0 bg-paper-texture opacity-90 pointer-events-none"></div>
-         <div className="absolute inset-0 bg-subtle-glow pointer-events-none"></div>
-
-         <div className="w-full max-w-4xl flex flex-col h-full relative">
+          <nav className="flex-1 space-y-3">
+            <p className="text-[10px] text-gold-600 uppercase tracking-widest font-bold mb-2">Sugestões</p>
+            <button onClick={() => { handleSend("Quais são as leituras da missa de hoje?"); setSidebarOpen(false); }} className="w-full text-left p-3 text-sm text-church-100 hover:text-gold-200 flex items-center gap-3"><Calendar className="w-4 h-4" /> Liturgia Diária</button>
+            <button onClick={() => { handleSend("Ajude-me com um exame de consciência para a confissão."); setSidebarOpen(false); }} className="w-full text-left p-3 text-sm text-church-100 hover:text-gold-200 flex items-center gap-3"><Shield className="w-4 h-4" /> Exame de Consciência</button>
+            <button onClick={() => { handleSend("Como rezar o Santo Terço corretamente?"); setSidebarOpen(false); }} className="w-full text-left p-3 text-sm text-church-100 hover:text-gold-200 flex items-center gap-3"><BookOpen className="w-4 h-4" /> Santo Terço</button>
             
-            {/* Chat Area */}
-            <main className="flex-1 overflow-y-auto p-4 md:px-8 md:py-6 space-y-6 scrollbar-hide relative z-10 pb-36 md:pb-32">
-                
-                {/* Background Watermark */}
-                <div className="absolute top-1/2 left-1/4 -translate-x-1/2 -translate-y-1/2 pointer-events-none opacity-[0.03] z-0">
-                    <ChiRhoIcon className="w-96 h-96 text-royal-900" />
-                </div>
+            <div className="pt-6 border-t border-gold-600/20">
+              <button onClick={() => { setAboutOpen(true); setSidebarOpen(false); }} className="w-full text-left p-3 text-sm text-church-100 hover:text-gold-200 flex items-center gap-3"><Info className="w-4 h-4" /> Sobre a Obra</button>
+            </div>
+          </nav>
 
-                {isWelcomeState && liturgicalInfo && (
-                   <div className="animate-fade-in-up space-y-6 md:space-y-8 mt-4 md:mt-8 mb-8">
-                       
-                       {/* Liturgical Season Banner */}
-                       <div className="relative overflow-hidden rounded-2xl border border-gold-500/20 shadow-glow bg-royal-900 group cursor-pointer transition-transform hover:scale-[1.01]" onClick={() => handleSendMessage(`Fale-me sobre o tempo litúrgico atual: ${liturgicalInfo.season}`)}>
-                           <div className="absolute inset-0 bg-leather-texture opacity-60"></div>
-                           <div className="absolute inset-0 bg-gradient-to-r from-royal-900 to-transparent z-10"></div>
-                           {/* Liturgical Color Accent */}
-                           <div className="absolute right-0 top-0 bottom-0 w-1/2 opacity-20 blur-3xl" style={{ backgroundColor: liturgicalColorMap[liturgicalInfo.color] }}></div>
-                           
-                           <div className="relative z-20 p-5 md:p-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-                               <div>
-                                   <div className="flex items-center gap-2 text-gold-400 mb-1">
-                                       <CalendarIcon className="w-4 h-4" />
-                                       <span className="text-[10px] uppercase tracking-widest font-display">Liturgia Diária</span>
-                                   </div>
-                                   <h2 className="text-2xl md:text-3xl font-display font-bold text-white mb-2">
-                                       {liturgicalInfo.season === 'Ordinary Time' ? 'Tempo Comum' : 
-                                        liturgicalInfo.season === 'Advent' ? 'Tempo do Advento' : 
-                                        liturgicalInfo.season === 'Lent' ? 'Quaresma' : 
-                                        liturgicalInfo.season === 'Easter' ? 'Tempo Pascal' : 'Natal'}
-                                   </h2>
-                                   <p className="text-church-200 font-serif text-base max-w-md italic opacity-90 line-clamp-2 md:line-clamp-none">
-                                       "{liturgicalInfo.description}"
-                                   </p>
-                               </div>
-                               <button className="px-4 py-2 rounded-full border border-gold-500/30 text-gold-300 text-xs font-bold uppercase tracking-wider hover:bg-gold-500/10 transition-colors whitespace-nowrap hidden md:block">
-                                   Ver Reflexão
-                               </button>
-                           </div>
-                       </div>
+          {!isPremium && (
+             <button 
+              onClick={() => setPaywallOpen(true)}
+              className="mt-4 w-full p-3 bg-gradient-to-r from-gold-600 to-gold-400 text-royal-900 rounded font-bold shadow-lg flex items-center justify-center gap-2 hover:brightness-110 transition-all text-xs"
+             >
+               <Star className="w-4 h-4 fill-royal-900" /> SEJA PREMIUM
+             </button>
+          )}
 
-                       {/* Welcome Text */}
-                       <div className="text-center space-y-2 py-4">
-                           <OrnateDivider className="w-12 h-2 mx-auto text-gold-400 mb-2 opacity-60" />
-                           <p className="text-xl text-church-800 font-serif italic px-4">
-                               "Pedi e se vos dará. Buscai e achareis."
-                           </p>
-                           <p className="text-xs text-church-500 font-display tracking-widest uppercase">Mateus 7,7</p>
-                       </div>
-
-                       {/* Action Cards Grid */}
-                       <div className="grid grid-cols-1 md:grid-cols-3 gap-3 md:gap-4">
-                            <button 
-                                onClick={() => handleSendMessage("Quais são as condições para um pecado ser mortal segundo o Catecismo?")}
-                                className="card-premium p-5 md:p-6 flex flex-row md:flex-col items-center text-left md:text-center rounded-xl group gap-4 md:gap-0"
-                            >
-                                <div className="w-12 h-12 md:w-12 md:h-12 rounded-full bg-gradient-to-br from-gold-50 to-church-100 border border-gold-200 flex-none flex items-center justify-center text-gold-600 md:mb-4 shadow-sm group-hover:scale-110 transition-transform duration-300">
-                                    <ScrollIcon className="w-6 h-6" />
-                                </div>
-                                <div>
-                                    <h3 className="font-display font-bold text-royal-900 text-sm mb-1 md:mb-2 uppercase tracking-wide">Dúvida de Fé</h3>
-                                    <p className="text-sm text-church-600 font-serif leading-relaxed line-clamp-2">Esclareça questões doutrinárias com o Catecismo.</p>
-                                </div>
-                            </button>
-
-                            <button 
-                                onClick={() => handleSuggestionClick(SuggestionType.PRAYER)}
-                                className="card-premium p-5 md:p-6 flex flex-row md:flex-col items-center text-left md:text-center rounded-xl group relative overflow-hidden gap-4 md:gap-0"
-                            >
-                                <div className="absolute inset-0 bg-gold-500/5 opacity-0 group-hover:opacity-100 transition-opacity"></div>
-                                <div className="w-12 h-12 md:w-12 md:h-12 rounded-full bg-gradient-to-br from-gold-50 to-church-100 border border-gold-200 flex-none flex items-center justify-center text-gold-600 md:mb-4 shadow-sm group-hover:scale-110 transition-transform duration-300">
-                                    <HeartIcon className="w-6 h-6" />
-                                </div>
-                                <div>
-                                    <h3 className="font-display font-bold text-royal-900 text-sm mb-1 md:mb-2 uppercase tracking-wide">Vida de Oração</h3>
-                                    <p className="text-sm text-church-600 font-serif leading-relaxed line-clamp-2">Encontre conforto e orações para seu momento.</p>
-                                </div>
-                            </button>
-
-                            <button 
-                                onClick={() => handleSendMessage("Como fazer um bom exame de consciência?")}
-                                className="card-premium p-5 md:p-6 flex flex-row md:flex-col items-center text-left md:text-center rounded-xl group gap-4 md:gap-0"
-                            >
-                                <div className="w-12 h-12 md:w-12 md:h-12 rounded-full bg-gradient-to-br from-gold-50 to-church-100 border border-gold-200 flex-none flex items-center justify-center text-gold-600 md:mb-4 shadow-sm group-hover:scale-110 transition-transform duration-300">
-                                    <CandleIcon className="w-6 h-6" />
-                                </div>
-                                <div>
-                                    <h3 className="font-display font-bold text-royal-900 text-sm mb-1 md:mb-2 uppercase tracking-wide">Sacramentos</h3>
-                                    <p className="text-sm text-church-600 font-serif leading-relaxed line-clamp-2">Prepare-se para a Confissão ou Eucaristia.</p>
-                                </div>
-                            </button>
-                       </div>
-                   </div>
-                )}
-
-                {/* Messages */}
-                {(!isWelcomeState || chatState.messages.length > 1) && chatState.messages.map((msg) => (
-                    <MessageBubble key={msg.id} message={msg} />
-                ))}
-
-                {chatState.error && (
-                <div className="flex justify-center">
-                    <div className="bg-red-50 text-red-800 px-4 py-3 rounded-lg text-sm border border-red-200 font-serif italic shadow-sm text-center">
-                    {chatState.error}
-                    </div>
-                </div>
-                )}
-
-                <div ref={messagesEndRef} className="h-4" />
-            </main>
-
-            {/* Floating Input Dock - Disabled/Hidden visually via Modal backdrop if locked, but logic kept intact */}
-            <footer className="absolute bottom-4 left-2 right-2 md:bottom-6 md:left-6 md:right-6 z-30 pointer-events-none flex flex-col items-center gap-3">
-                
-                {/* Suggestions Row */}
-                {!isWelcomeState && (!chatState.isLoading || loadingSuggestion !== null) && !selectedFile && (
-                <div className="pointer-events-auto flex gap-2 overflow-x-auto max-w-full pb-2 scrollbar-hide px-2 w-full md:w-auto justify-start md:justify-center">
-                    {[
-                        { type: SuggestionType.EXAM, icon: <SparklesIcon />, label: "Exame de Consciência" },
-                        { type: SuggestionType.PRAYER, icon: <HeartIcon />, label: "Pedir Oração" },
-                        { type: SuggestionType.CATECHESIS, icon: <QuoteIcon />, label: "Dúvida Doutrinária" }
-                    ].map((item) => {
-                        const isLoadingThis = loadingSuggestion === item.type;
-                        const isDisabled = loadingSuggestion !== null && !isLoadingThis;
-                        
-                        return (
-                            <button 
-                                key={item.type}
-                                onClick={() => !loadingSuggestion && handleSuggestionClick(item.type)}
-                                disabled={!!loadingSuggestion || showPaywall}
-                                className={`flex-none flex items-center gap-2 px-4 py-2.5 md:px-4 md:py-2 bg-white/90 backdrop-blur border border-white/50 text-church-800 text-sm font-bold rounded-full shadow-lg transition-all
-                                    ${isLoadingThis ? 'bg-gold-50 border-gold-300 pr-5' : ''}
-                                    ${isDisabled || showPaywall ? 'opacity-50 cursor-not-allowed scale-95' : 'hover:scale-105 active:scale-95 hover:text-gold-600'}
-                                `}
-                            >
-                                <span className="text-gold-500">
-                                    {isLoadingThis ? <SpinnerIcon className="w-4 h-4 text-gold-600" /> : item.icon}
-                                </span>
-                                <span className="whitespace-nowrap">{item.label}</span>
-                            </button>
-                        );
-                    })}
-                </div>
-                )}
-
-                {/* Input Capsule */}
-                <div className="pointer-events-auto w-full max-w-3xl bg-white/95 backdrop-blur-xl border border-white/60 shadow-glass rounded-2xl p-1.5 md:p-2 flex items-end gap-2 relative transition-all duration-300 focus-within:shadow-glow focus-within:bg-white pb-safe">
-                    
-                     {selectedFile && (
-                        <div className="absolute -top-12 left-0 right-0 flex justify-center animate-fade-in-up">
-                            <div className="bg-royal-900 text-gold-100 px-4 py-2 rounded-full text-xs shadow-xl border border-gold-500/30 flex items-center gap-2 max-w-[90%]">
-                                <PaperclipIcon className="w-3 h-3 flex-none" />
-                                <span className="font-serif italic truncate">{selectedFile.name}</span>
-                                <button onClick={clearFile} className="ml-2 hover:text-red-400 p-1"><CrossIcon className="w-3 h-3" /></button>
-                            </div>
-                        </div>
-                    )}
-
-                    {/* Left Actions */}
-                    <div className="flex-none pb-1 pl-1">
-                        <input type="file" ref={fileInputRef} onChange={handleFileSelect} accept=".pdf,.txt,.md" className="hidden" />
-                        <button 
-                            onClick={() => fileInputRef.current?.click()}
-                            className="p-3 md:p-3 text-church-400 hover:text-gold-600 hover:bg-church-50 rounded-xl transition-colors"
-                            title="Anexar documento"
-                            disabled={chatState.isLoading || showPaywall}
-                        >
-                            <PaperclipIcon className="w-6 h-6 md:w-5 md:h-5" />
-                        </button>
-                    </div>
-
-                    {/* Text Area */}
-                    <div className="flex-1 py-1">
-                        <textarea
-                            ref={textareaRef}
-                            value={inputText}
-                            onChange={(e) => setInputText(e.target.value)}
-                            onKeyDown={handleKeyDown}
-                            placeholder={selectedFile ? "Enviar para leitura..." : "Escreva sua dúvida..."}
-                            rows={1}
-                            className="w-full bg-transparent text-church-900 text-base font-serif placeholder:text-church-400/60 placeholder:italic focus:outline-none resize-none max-h-32 py-2.5 px-1"
-                            disabled={chatState.isLoading || showPaywall}
-                        />
-                    </div>
-
-                    {/* Send Button */}
-                    <button
-                        onClick={() => handleSendMessage(inputText)}
-                        disabled={chatState.isLoading || (!inputText.trim() && !selectedFile) || showPaywall}
-                        className="btn-3d-gold h-11 w-11 md:h-11 md:w-11 rounded-xl flex-none flex items-center justify-center disabled:opacity-50 disabled:shadow-none transition-transform active:scale-95 mb-0.5 mr-0.5"
-                    >
-                        <SendIcon className="w-5 h-5" />
-                    </button>
-                </div>
-            </footer>
-         </div>
+          <button onClick={() => supabase.auth.signOut()} className="mt-10 flex items-center gap-2 text-church-400 hover:text-red-400 text-xs transition-colors">
+            <LogOut className="w-4 h-4" /> Sair da conta
+          </button>
+        </div>
       </div>
+
+      {/* CHAT AREA */}
+      <div className="flex-1 flex flex-col h-full relative z-10">
+        
+        {/* Header */}
+        <header className="bg-royal-900 text-gold-100 p-4 border-b border-gold-600/30 flex items-center justify-between shadow-lg">
+          <div className="flex items-center gap-4">
+            <button onClick={() => setSidebarOpen(true)} className="md:hidden"><Menu className="w-6 h-6 text-gold-400"/></button>
+            <div className="flex flex-col">
+              <h1 className="font-display font-bold text-sm tracking-widest md:text-lg">DIVINE ASSISTANT</h1>
+              <div className="flex items-center gap-2">
+                <div className={`w-2 h-2 rounded-full ${season.bg} animate-pulse shadow-[0_0_5px_rgba(255,255,255,0.5)]`}></div>
+                <span className="text-[10px] uppercase font-bold text-gold-500 tracking-tighter">{season.name}</span>
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+             {isPremium && <Star className="w-4 h-4 text-gold-400 fill-gold-400" />}
+             <div className="w-8 h-8 rounded-full bg-royal-800 border border-gold-600/50 flex items-center justify-center overflow-hidden">
+                <User className="w-4 h-4 text-gold-400" />
+             </div>
+          </div>
+        </header>
+
+        {/* Messages */}
+        <main className="flex-1 overflow-y-auto p-4 md:p-8 space-y-6 pb-24 scroll-smooth">
+          <div className="max-w-3xl mx-auto space-y-6">
+            {messages.map((m) => (
+              <div key={m.id} className={`flex w-full animate-fade-in-up ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                <div className={`max-w-[85%] md:max-w-[75%] p-4 rounded-2xl relative shadow-sm ${
+                  m.role === 'user' 
+                    ? 'bg-royal-800 text-white rounded-tr-none border border-gold-600/30' 
+                    : 'bg-white text-royal-900 rounded-tl-none border border-church-200'
+                }`}>
+                  {!m.role.includes('user') && (
+                    <div className="flex items-center gap-2 mb-2 border-b border-gold-500/10 pb-1">
+                      <Cross className="w-3 h-3 text-gold-600" />
+                      <span className="text-[10px] font-display font-bold text-gold-600 tracking-widest uppercase">Assistant</span>
+                    </div>
+                  )}
+                  <div className="font-serif text-sm md:text-base leading-relaxed whitespace-pre-wrap">
+                    {m.content.split(/(\*\*.*?\*\*)/).map((part, i) => 
+                      part.startsWith('**') && part.endsWith('**') 
+                        ? <strong key={i} className="font-bold text-gold-700">{part.slice(2, -2)}</strong> 
+                        : part
+                    )}
+                  </div>
+                  <div className={`text-[9px] mt-2 opacity-40 text-right font-sans`}>
+                    {new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </div>
+                </div>
+              </div>
+            ))}
+            {isLoading && (
+              <div className="flex justify-start animate-fade-in-up">
+                <div className="bg-church-100 p-4 rounded-2xl rounded-tl-none border border-church-200 text-royal-900 italic text-sm flex items-center gap-3">
+                   <div className="flex gap-1">
+                      <div className="w-1 h-1 bg-gold-600 rounded-full animate-bounce"></div>
+                      <div className="w-1 h-1 bg-gold-600 rounded-full animate-bounce [animation-delay:0.2s]"></div>
+                      <div className="w-1 h-1 bg-gold-600 rounded-full animate-bounce [animation-delay:0.4s]"></div>
+                   </div>
+                   Consultando o Magistério...
+                </div>
+              </div>
+            )}
+            {/* SENTINEL FOR SCROLLING */}
+            <div ref={messagesEndRef} className="h-4" />
+          </div>
+        </main>
+
+        {/* Input */}
+        <div className="absolute bottom-0 inset-x-0 p-4 bg-gradient-to-t from-church-50 via-church-50/90 to-transparent">
+          <div className="max-w-3xl mx-auto bg-white p-2 rounded-xl shadow-2xl border border-church-200 flex items-center gap-2">
+            <button className="p-3 text-church-400 hover:text-gold-600 transition-colors"><Paperclip className="w-5 h-5"/></button>
+            <input 
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleSend()}
+              placeholder="Pergunte sobre fé, moral ou oração..."
+              className="flex-1 bg-transparent p-3 outline-none text-royal-900 placeholder:text-church-400 font-serif"
+            />
+            <button 
+              onClick={() => handleSend()}
+              disabled={isLoading || !input.trim()}
+              className="p-3 bg-royal-900 text-gold-400 rounded-lg disabled:opacity-50 hover:bg-royal-800 transition-all active:scale-95 shadow-lg"
+            >
+              <Send className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* MODALS */}
+      {isAboutOpen && (
+        <div className="fixed inset-0 z-[100] bg-royal-900/90 backdrop-blur flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-church-50 w-full max-w-lg rounded-lg shadow-2xl border-2 border-gold-500 p-8 relative animate-fade-in bg-paper">
+            <button onClick={() => setAboutOpen(false)} className="absolute top-4 right-4 text-church-400 hover:text-royal-900"><X className="w-6 h-6"/></button>
+            <div className="text-center mb-6">
+              <Cross className="w-10 h-10 text-gold-600 mx-auto mb-2" />
+              <h2 className="text-2xl font-display font-bold text-royal-900 tracking-widest uppercase">Sobre a Obra</h2>
+            </div>
+            <div className="font-serif text-church-900 space-y-4 text-justify text-sm md:text-base leading-relaxed">
+              <p>O <strong>Divine Assistant</strong> é uma ferramenta de auxílio catequético projetada para facilitar o acesso à sabedoria da Igreja Católica através da Inteligência Artificial.</p>
+              <div className="bg-gold-100 p-4 border-l-4 border-gold-600 italic rounded-r-lg">
+                <strong>Nota Importante:</strong> Esta IA não é um sacerdote, não possui alma e não pode administrar sacramentos. Ela não substitui a direção espiritual ou a Santa Missa.
+              </div>
+              <p>Todo conteúdo é baseado no Catecismo e nos Documentos Oficiais. Para absolvição de pecados, procure o Sacramento da Confissão presencialmente.</p>
+            </div>
+            <div className="mt-8 pt-6 border-t border-church-200 text-center">
+               <p className="text-[10px] uppercase font-bold tracking-[0.3em] text-gold-600">Ad Maiorem Dei Gloriam</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isPaywallOpen && (
+        <div className="fixed inset-0 z-[110] bg-royal-900/95 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-md rounded-xl shadow-2xl overflow-hidden border-2 border-gold-500 animate-fade-in">
+            <div className="bg-royal-900 p-8 text-center border-b-4 border-gold-500 relative">
+               <button onClick={() => setPaywallOpen(false)} className="absolute top-4 right-4 text-gold-500 hover:text-white"><X className="w-6 h-6"/></button>
+               <Star className="w-12 h-12 text-gold-400 mx-auto mb-3 animate-pulse" />
+               <h2 className="text-2xl font-display font-bold text-gold-100 uppercase tracking-[0.2em]">Guardião da Fé</h2>
+               <p className="text-gold-400 text-xs font-serif italic mt-1">Apoie este projeto de evangelização.</p>
+            </div>
+            <div className="p-8 text-center space-y-6">
+              <p className="text-church-800 font-serif">Acesso gratuito esgotado. Desbloqueie conversas ilimitadas e acesso a modelos de teologia profunda.</p>
+              <div className="flex items-baseline justify-center gap-2">
+                <span className="text-4xl font-display font-bold text-royal-900">R$ 19,90</span>
+                <span className="text-sm text-church-400">/ mês</span>
+              </div>
+              <button 
+                onClick={handleSubscribe}
+                className="w-full bg-gold-500 text-white font-display font-bold py-4 rounded-lg shadow-xl hover:bg-gold-600 transition-all uppercase tracking-widest text-sm"
+              >
+                Assinar Agora
+              </button>
+              <p className="text-[10px] text-church-400">Pagamento seguro via Stripe. Cancele quando quiser.</p>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
-};
-
-export default App;
+}

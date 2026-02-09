@@ -1,22 +1,15 @@
 <!DOCTYPE html>
 <html lang="pt-BR" class="h-full">
   <head>
-    <!-- CRITICAL POLYFILL: Must be the first script to prevent crashes in libraries that access 'process' -->
-    <script>
-      (function() {
-        var global = window;
-        window.global = window;
-        window.process = window.process || { env: {} };
-        if (!window.process.env) window.process.env = {};
-      })();
-    </script>
-    
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <title>Divine Assistant - Guia Espiritual</title>
 
+    <!-- Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700&family=Inter:wght@300;400;600&family=Merriweather:ital,wght@0,300;0,400;0,700;1,400&display=swap" rel="stylesheet">
+    
+    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;500;600;700;800;900&family=Inter:wght@300;400;500&family=Merriweather:ital,wght@0,300;0,400;0,700;1,300;1,400&display=swap" rel="stylesheet">
     <script>
       tailwind.config = {
         theme: {
@@ -27,180 +20,79 @@
               display: ['Cinzel', 'serif'],
             },
             colors: {
-              church: {
-                50: '#F9F8F4', // Off-white parchment
-                100: '#F0EFE9',
-                200: '#E2DFD2',
-                400: '#A89F91',
-                500: '#8C8273',
-                800: '#4A4036', // Dark wood
-                900: '#2C241B', // Deep wood
-              },
               royal: {
-                800: '#1A233A', // Deep Midnight Blue
-                900: '#0B101D', // Almost Black Blue (Darker for contrast)
+                800: '#1A233A',
+                900: '#0B101D',
+                950: '#05080F',
               },
               gold: {
-                100: '#FBF5C5', // Light Shimmer
+                100: '#FBF5C5',
                 200: '#F2E8C4', 
                 300: '#E6C87C',
-                400: '#D4AF37', // Base Gold
-                500: '#B59422', // Shadow Gold
-                600: '#8A7019', // Deep Gold
-                700: '#634F12',
+                400: '#D4AF37',
+                500: '#B59422',
+                600: '#8A7019',
+              },
+              church: {
+                50: '#F9F8F4',
+                100: '#F0EFE9',
+                200: '#E2DFD2',
+                800: '#4A4036',
+                900: '#2C241B',
               }
             },
-            backgroundImage: {
-              'paper-texture': "url('https://www.transparenttextures.com/patterns/cream-paper.png')",
-              'leather-texture': "url('https://www.transparenttextures.com/patterns/dark-leather.png')",
-              'vignette': 'radial-gradient(circle at center, transparent 0%, rgba(0,0,0,0.4) 100%)',
-              'gold-gradient': 'linear-gradient(135deg, #BF953F 0%, #FCF6BA 25%, #B38728 50%, #FBF5B7 75%, #AA771C 100%)',
-              'gold-gradient-hover': 'linear-gradient(135deg, #D4AF37 0%, #FFF8D6 25%, #C59D35 50%, #FFFACD 75%, #B8860B 100%)',
-              'royal-gradient': 'linear-gradient(180deg, #1A233A 0%, #0F1524 100%)',
-              'subtle-glow': 'radial-gradient(circle at 50% 50%, rgba(212, 175, 55, 0.15) 0%, transparent 70%)',
-            },
-            boxShadow: {
-              '3d': '0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -2px rgba(0, 0, 0, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.1)',
-              '3d-hover': '0 20px 25px -5px rgba(0, 0, 0, 0.3), 0 10px 10px -5px rgba(0, 0, 0, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.1)',
-              'glow': '0 0 20px rgba(212, 175, 55, 0.4)',
-              'inner-light': 'inset 0 2px 4px rgba(255, 255, 255, 0.3)',
-              'glass': '0 8px 32px 0 rgba(31, 38, 135, 0.15)',
-            },
             animation: {
-              'float': 'float 6s ease-in-out infinite',
-              'shine': 'shine 3s linear infinite',
-              'pulse-slow': 'pulse 4s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+              'fade-in-up': 'fadeInUp 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards',
             },
             keyframes: {
-              float: {
-                '0%, 100%': { transform: 'translateY(0)' },
-                '50%': { transform: 'translateY(-10px)' },
-              },
-              shine: {
-                '0%': { backgroundPosition: '200% center' },
-                '100%': { backgroundPosition: '-200% center' },
+              fadeInUp: {
+                '0%': { opacity: '0', transform: 'translateY(15px)' },
+                '100%': { opacity: '1', transform: 'translateY(0)' },
               }
             }
           }
         }
       }
     </script>
-    <style>
-      html, body {
-        height: 100%;
-        overflow: hidden;
-        background-color: #0B101D;
-        touch-action: manipulation;
-        -webkit-tap-highlight-color: transparent;
-      }
-      
-      .pb-safe { padding-bottom: env(safe-area-inset-bottom); }
-      .pt-safe { padding-top: env(safe-area-inset-top); }
 
-      #root { height: 100%; }
-
-      /* Metallic Text Class */
-      .text-gold-metallic {
-        background: linear-gradient(to bottom, #cfc09f 22%,#634f2c 24%, #cfc09f 26%, #cfc09f 27%,#ffecb3 40%,#3a2c0f 78%); 
-        -webkit-background-clip: text; 
-        -webkit-text-fill-color: transparent; 
-        color: #fff; 
-      }
-
-      /* Premium Card */
-      .card-premium {
-        background: linear-gradient(145deg, rgba(255,255,255,0.9), rgba(249,248,244,0.95));
-        border: 1px solid rgba(212, 175, 55, 0.2);
-        box-shadow: 
-          0 4px 6px -1px rgba(0, 0, 0, 0.05),
-          0 2px 4px -1px rgba(0, 0, 0, 0.03),
-          inset 0 1px 0 rgba(255, 255, 255, 0.8);
-        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-        position: relative;
-        overflow: hidden;
-      }
-      .card-premium::before {
-        content: '';
-        position: absolute;
-        top: 0; left: 0; right: 0; height: 1px;
-        background: linear-gradient(90deg, transparent, rgba(212, 175, 55, 0.6), transparent);
-        opacity: 0.5;
-      }
-      .card-premium:hover {
-        transform: translateY(-2px);
-        border-color: rgba(212, 175, 55, 0.5);
-        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 0 15px rgba(212, 175, 55, 0.1);
-      }
-
-      /* Glassmorphism Panel */
-      .glass-panel {
-        background: rgba(255, 255, 255, 0.75);
-        backdrop-filter: blur(12px);
-        -webkit-backdrop-filter: blur(12px);
-        border: 1px solid rgba(255, 255, 255, 0.6);
-        box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.07);
-      }
-      
-      .glass-dark {
-        background: rgba(11, 16, 29, 0.6);
-        backdrop-filter: blur(12px);
-        -webkit-backdrop-filter: blur(12px);
-        border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-      }
-
-      /* 3D Button Style */
-      .btn-3d-gold {
-        background-image: linear-gradient(135deg, #BF953F 0%, #FCF6BA 25%, #B38728 50%, #FBF5B7 75%, #AA771C 100%);
-        background-size: 200% auto;
-        color: #2C241B;
-        text-shadow: 0 1px 0 rgba(255,255,255,0.4);
-        box-shadow: 
-          0 4px 0 #634F12, /* The "Side" of the button */
-          0 10px 10px rgba(0,0,0,0.3); /* Drop shadow */
-        transition: all 0.2s ease;
-      }
-      .btn-3d-gold:active {
-        transform: translateY(4px);
-        box-shadow: 
-          0 0 0 #634F12,
-          0 2px 5px rgba(0,0,0,0.3);
-      }
-      .btn-3d-gold:hover {
-        background-position: right center;
-      }
-
-      /* Scrollbars */
-      .scrollbar-hide::-webkit-scrollbar { display: none; }
-      .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
-      
-      ::-webkit-scrollbar { width: 6px; }
-      ::-webkit-scrollbar-track { background: #1A233A; }
-      ::-webkit-scrollbar-thumb { 
-        background: linear-gradient(to bottom, #BF953F, #AA771C); 
-        border-radius: 4px; 
-      }
-
-      .animate-fade-in-up { animation: fadeInUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
-      @keyframes fadeInUp {
-        from { opacity: 0; transform: translateY(20px); }
-        to { opacity: 1; transform: translateY(0); }
-      }
-    </style>
-  <script type="importmap">
+    <!-- Import Map: Corrigido para evitar conflitos de versão -->
+    <script type="importmap">
 {
   "imports": {
-    "react-dom": "https://esm.sh/react-dom@18.3.1",
-    "react-dom/client": "https://esm.sh/react-dom@18.3.1/client",
-    "react-dom/": "https://esm.sh/react-dom@18.3.1/",
-    "react": "https://esm.sh/react@18.3.1",
-    "react/": "https://esm.sh/react@18.3.1/",
-    "@google/genai": "https://esm.sh/@google/genai@0.1.1",
+    "react": "https://esm.sh/react@18.2.0",
+    "react-dom": "https://esm.sh/react-dom@18.2.0",
+    "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+    "lucide-react": "https://esm.sh/lucide-react@0.344.0",
+    "@google/genai": "https://esm.sh/@google/genai@0.2.1",
     "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@2.39.0",
-    "@stripe/stripe-js": "https://esm.sh/@stripe/stripe-js@2.4.0"
+    "@stripe/stripe-js": "https://esm.sh/@stripe/stripe-js@4.1.0",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.4/",
+    "react/": "https://esm.sh/react@^19.2.4/"
   }
 }
 </script>
-</head>
+    
+    <style>
+      body { background-color: #0B101D; margin: 0; padding: 0; }
+      #root { height: 100vh; width: 100vw; }
+      
+      /* Scrollbar Customization */
+      ::-webkit-scrollbar { width: 6px; }
+      ::-webkit-scrollbar-track { background: #0B101D; }
+      ::-webkit-scrollbar-thumb { background: #D4AF37; border-radius: 3px; }
+
+      .bg-paper {
+        background-image: url('https://www.transparenttextures.com/patterns/cream-paper.png');
+        background-repeat: repeat;
+      }
+
+      .animate-fade-in { animation: fadeIn 0.5s ease-out forwards; }
+      @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(10px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+    </style>
+  </head>
   <body>
     <div id="root"></div>
   </body>
